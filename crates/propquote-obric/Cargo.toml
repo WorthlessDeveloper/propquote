@@ -1,0 +1,13 @@
+[package]
+name = "propquote-obric"
+description = "Closed-form, overflow-safe quoter for the Obric V2 oracle PMM on Solana."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+propquote-core = { path = "../propquote-core" }
+
+[lints.rust]
+unsafe_code = "forbid"

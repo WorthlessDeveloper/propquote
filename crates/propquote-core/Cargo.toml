@@ -1,0 +1,13 @@
+[package]
+name = "propquote-core"
+description = "Dependency-free core: overflow-safe integer math, byte decoding, and the PropAmm quoting trait."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Intentionally none. The core must compile and test fully offline.
+
+[lints.rust]
+unsafe_code = "forbid"
