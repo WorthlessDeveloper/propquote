@@ -37,7 +37,11 @@ struct Curve {
 
 impl ObricPool {
     pub fn new(state: SSTradingPair) -> Self {
-        ObricPool { state, current_x: 0, current_y: 0 }
+        ObricPool {
+            state,
+            current_x: 0,
+            current_y: 0,
+        }
     }
 
     /// Set the current vault balances (raw token units).
@@ -50,8 +54,12 @@ impl ObricPool {
     /// `target_x_k = sqrt(big_k * mult_y / mult_x)` — the curve-K point where marginal price equals
     /// the oracle price. Overflow-safe (the multiply is done at 256-bit width).
     fn target_x_k(&self) -> Result<u128, QuoteError> {
-        let v = mul_div_floor(self.state.big_k, self.state.mult_y as u128, self.state.mult_x as u128)
-            .ok_or(QuoteError::MathOverflow)?;
+        let v = mul_div_floor(
+            self.state.big_k,
+            self.state.mult_y as u128,
+            self.state.mult_x as u128,
+        )
+        .ok_or(QuoteError::MathOverflow)?;
         Ok(isqrt(v))
     }
 
@@ -62,12 +70,22 @@ impl ObricPool {
         if mx == 0 || my == 0 {
             return Err(QuoteError::InvalidData);
         }
-        let value_x = self.current_x.checked_mul(mx).ok_or(QuoteError::MathOverflow)?;
-        let value_y = self.current_y.checked_mul(my).ok_or(QuoteError::MathOverflow)?;
-        let value_total = value_x.checked_add(value_y).ok_or(QuoteError::MathOverflow)?;
+        let value_x = self
+            .current_x
+            .checked_mul(mx)
+            .ok_or(QuoteError::MathOverflow)?;
+        let value_y = self
+            .current_y
+            .checked_mul(my)
+            .ok_or(QuoteError::MathOverflow)?;
+        let value_total = value_x
+            .checked_add(value_y)
+            .ok_or(QuoteError::MathOverflow)?;
         let target_x = self.state.target_x as u128;
         let target_x_value = target_x.checked_mul(mx).ok_or(QuoteError::MathOverflow)?;
-        let target_y_value = value_total.checked_sub(target_x_value).ok_or(QuoteError::Underflow)?;
+        let target_y_value = value_total
+            .checked_sub(target_x_value)
+            .ok_or(QuoteError::Underflow)?;
         let target_y = target_y_value / my;
         Ok((target_x, target_y))
     }
@@ -98,7 +116,14 @@ impl ObricPool {
             Side::YtoX => (target_y, self.current_y, self.current_x, my / mx),
         };
 
-        Ok(Curve { big_k, current_x_k, target, current_in, current_out, oracle_price })
+        Ok(Curve {
+            big_k,
+            current_x_k,
+            target,
+            current_in,
+            current_out,
+            oracle_price,
+        })
     }
 
     /// Exact-in quote for either side.
@@ -111,13 +136,17 @@ impl ObricPool {
 
         // Walk the constant-product invariant on curve-K. The input side always *adds* to its
         // curve-K coordinate; we then read the other coordinate off `big_k / coord`.
-        let (current_in_k, out_before_fee, marginal_before, marginal_after) = match side {
+        let (_current_in_k, out_before_fee, marginal_before, marginal_after) = match side {
             Side::XtoY => {
                 let current_x_k = c.current_x_k;
                 let current_y_k = c.big_k / current_x_k;
-                let new_x_k = current_x_k.checked_add(input).ok_or(QuoteError::MathOverflow)?;
+                let new_x_k = current_x_k
+                    .checked_add(input)
+                    .ok_or(QuoteError::MathOverflow)?;
                 let new_y_k = c.big_k / new_x_k;
-                let out = current_y_k.checked_sub(new_y_k).ok_or(QuoteError::Underflow)?;
+                let out = current_y_k
+                    .checked_sub(new_y_k)
+                    .ok_or(QuoteError::Underflow)?;
                 let mb = marginal(c.big_k, current_x_k);
                 let ma = marginal(c.big_k, new_x_k);
                 (current_x_k, out, mb, ma)
@@ -125,15 +154,18 @@ impl ObricPool {
             Side::YtoX => {
                 let current_x_k = c.current_x_k;
                 let current_y_k = c.big_k / current_x_k;
-                let new_y_k = current_y_k.checked_add(input).ok_or(QuoteError::MathOverflow)?;
+                let new_y_k = current_y_k
+                    .checked_add(input)
+                    .ok_or(QuoteError::MathOverflow)?;
                 let new_x_k = c.big_k / new_y_k;
-                let out = current_x_k.checked_sub(new_x_k).ok_or(QuoteError::Underflow)?;
+                let out = current_x_k
+                    .checked_sub(new_x_k)
+                    .ok_or(QuoteError::Underflow)?;
                 let mb = marginal(c.big_k, current_y_k);
                 let ma = marginal(c.big_k, new_y_k);
                 (current_y_k, out, mb, ma)
             }
         };
-        let _ = current_in_k;
 
         // The pool cannot pay out more than it holds of the output token.
         if out_before_fee >= c.current_out {
@@ -144,7 +176,9 @@ impl ObricPool {
         let fee_before_rebate =
             mul_div_floor(out_before_fee, self.state.fee_millionth as u128, MILLION)
                 .ok_or(QuoteError::MathOverflow)?;
-        let deficit = c.target.saturating_sub(core::cmp::min(c.target, c.current_in));
+        let deficit = c
+            .target
+            .saturating_sub(core::cmp::min(c.target, c.current_in));
         let rebate_ratio = core::cmp::min(input, deficit) * 100 / input; // input > 0
         let mut rebate = fee_before_rebate
             .checked_mul(rebate_ratio)

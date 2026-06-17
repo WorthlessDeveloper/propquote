@@ -51,17 +51,23 @@ impl<'a> Cursor<'a> {
 
     pub fn read_u64(&mut self) -> Result<u64, QuoteError> {
         let b = self.take(8)?;
-        Ok(u64::from_le_bytes(b.try_into().map_err(|_| QuoteError::ShortBuffer)?))
+        Ok(u64::from_le_bytes(
+            b.try_into().map_err(|_| QuoteError::ShortBuffer)?,
+        ))
     }
 
     pub fn read_i64(&mut self) -> Result<i64, QuoteError> {
         let b = self.take(8)?;
-        Ok(i64::from_le_bytes(b.try_into().map_err(|_| QuoteError::ShortBuffer)?))
+        Ok(i64::from_le_bytes(
+            b.try_into().map_err(|_| QuoteError::ShortBuffer)?,
+        ))
     }
 
     pub fn read_u128(&mut self) -> Result<u128, QuoteError> {
         let b = self.take(16)?;
-        Ok(u128::from_le_bytes(b.try_into().map_err(|_| QuoteError::ShortBuffer)?))
+        Ok(u128::from_le_bytes(
+            b.try_into().map_err(|_| QuoteError::ShortBuffer)?,
+        ))
     }
 
     pub fn read_pubkey(&mut self) -> Result<Pubkey, QuoteError> {
@@ -83,7 +89,7 @@ mod tests {
         buf.extend_from_slice(&42u128.to_le_bytes());
 
         let mut c = Cursor::new(&buf);
-        assert_eq!(c.read_bool().unwrap(), true);
+        assert!(c.read_bool().unwrap());
         assert_eq!(c.read_u64().unwrap(), 7);
         assert_eq!(c.read_pubkey().unwrap(), [9u8; 32]);
         assert_eq!(c.read_u128().unwrap(), 42);

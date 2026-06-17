@@ -17,15 +17,17 @@ fn main() {
     let unit = 1_000_000u64; // 6 decimals
     let depth = 5_000_000 * unit; // 5,000,000.000000
 
-    let mut state = SSTradingPair::default();
-    state.is_initialized = true;
-    state.target_x = depth;
     // Concentration: put target_x_k far above target_x so the curve is very flat near the peg.
     let target_x_k: u128 = 500_000_000_000_000; // 5e14
-    state.big_k = target_x_k * target_x_k; // mults are 1:1, so target_x_k = sqrt(big_k)
-    state.fee_millionth = 100; // 1 bp
-    state.rebate_percentage = 0;
-    state.protocol_fee_share_thousandth = 200; // 20% of fees to protocol
+    let mut state = SSTradingPair {
+        is_initialized: true,
+        target_x: depth,
+        big_k: target_x_k * target_x_k, // mults are 1:1, so target_x_k = sqrt(big_k)
+        fee_millionth: 100,             // 1 bp
+        rebate_percentage: 0,
+        protocol_fee_share_thousandth: 200, // 20% of fees to protocol
+        ..Default::default()
+    };
     state.update_price(1000, 1000, 6, 6); // Pyth prices scaled ×1000 -> mult_x = mult_y = 1000
 
     let mut pool = ObricPool::new(state);

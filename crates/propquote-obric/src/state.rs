@@ -104,12 +104,14 @@ impl SSTradingPair {
     /// program's own `update_price`. Prices are Pyth values scaled to exponent -3 (i.e. ×1000).
     /// Uses saturating multiply so a bad feed can never panic the quoter.
     pub fn update_price(&mut self, price_x: u64, price_y: u64, x_decimals: u8, y_decimals: u8) {
-        let (x_deci_mult, y_deci_mult) = if x_decimals > y_decimals {
-            (1u64, 10u64.saturating_pow((x_decimals - y_decimals) as u32))
-        } else if y_decimals > x_decimals {
-            (10u64.saturating_pow((y_decimals - x_decimals) as u32), 1u64)
-        } else {
-            (1u64, 1u64)
+        let (x_deci_mult, y_deci_mult) = match x_decimals.cmp(&y_decimals) {
+            core::cmp::Ordering::Greater => {
+                (1u64, 10u64.saturating_pow((x_decimals - y_decimals) as u32))
+            }
+            core::cmp::Ordering::Less => {
+                (10u64.saturating_pow((y_decimals - x_decimals) as u32), 1u64)
+            }
+            core::cmp::Ordering::Equal => (1u64, 1u64),
         };
         self.mult_x = price_x.saturating_mul(x_deci_mult);
         self.mult_y = price_y.saturating_mul(y_deci_mult);

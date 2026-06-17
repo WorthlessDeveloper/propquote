@@ -1,0 +1,28 @@
+[package]
+name = "propquote-sim"
+description = "Ground-truth quote oracle: run a venue's real Solana program in LiteSVM and read the fill."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Heavy crate: pulls the Solana runtime via LiteSVM. Excluded from the workspace default-members so
+# the rest of the project stays dependency-light. Versions pinned to a known-good set (matches the
+# upstream LimeChain/magnus integration this mirrors). Compiled in CI on Linux.
+
+[dependencies]
+propquote-core = { path = "../propquote-core" }
+propquote-replay = { path = "../propquote-replay" }
+
+litesvm = "=0.8.2"
+solana-sdk = "3.0.0"
+solana-instruction = "3.0.0"
+solana-compute-budget = "3.0.0"
+spl-token = "7.0"
+spl-associated-token-account = "6.0"
+thiserror = "2"
+serde_json = "1"
+base64 = "0.22"
+
+[lints.rust]
+unsafe_code = "forbid"

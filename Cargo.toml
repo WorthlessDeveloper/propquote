@@ -3,6 +3,15 @@ resolver = "2"
 members = [
     "crates/propquote-core",
     "crates/propquote-obric",
+    "crates/propquote-replay",
+    "crates/propquote-sim",
+]
+# The heavy LiteSVM sim crate is excluded from the default set so `cargo build/test/clippy`
+# (and `cargo check`) stay fast and dependency-light. CI builds the sim crate in a separate job.
+default-members = [
+    "crates/propquote-core",
+    "crates/propquote-obric",
+    "crates/propquote-replay",
 ]
 
 [workspace.package]

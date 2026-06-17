@@ -1,5 +1,8 @@
 # propquote
 
+[![CI](https://github.com/WorthlessDeveloper/propquote/actions/workflows/ci.yml/badge.svg)](https://github.com/WorthlessDeveloper/propquote/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A from-scratch, **closed-form** quoting engine for Solana prop AMMs — built to beat
 [LimeChain/magnus](https://github.com/LimeChain/magnus) on the thing that matters for arbitrage:
 predicting a venue's quote as fast, pure arithmetic instead of simulating a transaction.
@@ -26,20 +29,34 @@ in-memory state. propquote does that, and fixes the rough edges of the Magnus po
 crates/
   propquote-core/    # zero-dep foundation: overflow-safe math, byte decoder, PropAmm trait, base58
   propquote-obric/   # Obric V2 closed-form quoter (reference impl for the oracle-PMM family)
+  propquote-replay/  # fit a closed form from (state, amount_in) -> amount_out samples + venue calldata
+  propquote-sim/     # ground-truth oracle: run a venue's real .so in LiteSVM (heavy; CI-only)
 ```
 
 The `PropAmm` trait is the seam: each venue is `decode state → quote(side, amount, mode)`. State
-refresh (RPC/Geyser) lives above the trait, so a quote never touches the network.
+refresh (RPC/Geyser) lives above the trait, so a quote never touches the network. The first three
+crates are zero-dependency and build/test in <1s; `propquote-sim` is the only heavy one and is kept
+out of the default build.
 
 ## Status
 
 | Venue | Approach | State |
 |-------|----------|-------|
 | **Obric V2** | closed-form (math is public) | ✅ implemented, 9 tests + independent numeric check |
-| SolFi V2 / ZeroFi / Tessera / HumidiFi / GoonFi / BisonFi | closed-form via fit-against-sim | ⏳ planned (see roadmap) |
+| SolFi V2 / ZeroFi / Tessera | closed-form via **fit-against-sim** | 🟡 tooling ready (sim + fitter + calldata); needs live data to fit |
+| HumidiFi / GoonFi / BisonFi | same pipeline | ⏳ next |
+
+**How a venue gets cracked now** (the pipeline is built, end to end):
+1. `propquote-sim` runs the venue's real `.so` in LiteSVM against live accounts → ground-truth `amount_out`.
+2. `propquote-replay::fit_obric_form` fits the oracle-PMM closed form to those samples and reports
+   the residual in bps. Sub-bp residual ⇒ you have a microsecond closed-form quoter for that venue.
+3. The fitter is verified to recover known pools to ≤0.01 bps (and exactly, to rounding dust, when
+   well-conditioned) — see `crates/propquote-replay/tests/fit_tests.rs`.
 
 The Obric math is the template: every other venue is the same oracle-anchored / concentrated /
 inventory-skewed shape (see [`../docs/prop-amm-quoting-model.md`](../docs/prop-amm-quoting-model.md)).
+The reverse-engineered swap calldata (selector + args) for SolFi V2 / ZeroFi / Tessera lives in
+`propquote-replay::venues` (byte-tested).
 
 ## The Obric model, in code
 
@@ -91,13 +108,14 @@ Geyser; re-decode on each push and you have a live, microsecond quoter.
 
 ## Roadmap (how the rest gets added — the genuinely "way better" part)
 
-1. **`propquote-sim`** (feature-gated, LiteSVM): runs a venue's real `.so` as a *ground-truth oracle*.
-   This is Magnus's whole approach, demoted here to a validation/fallback layer.
-2. **`propquote-replay`**: feed `(account state, amount_in) → amount_out` samples (from the sim or
-   from historical fills) and **fit each venue's closed-form parameters** until bit-exact. This is
-   how SolFi/ZeroFi/Tessera/HumidiFi graduate from "sim only" to "closed-form fast path", with the
-   sim kept as a continuous correctness check (operators reparametrize).
-3. **Geyser ingest + per-venue `PropAmm` impls** following the Obric template.
+- ✅ **`propquote-sim`** (LiteSVM): runs a venue's real `.so` as a *ground-truth oracle*. This is
+  Magnus's whole approach, demoted here to a validation/sample-source layer.
+- ✅ **`propquote-replay`**: feeds `(state, amount_in) → amount_out` samples and **fits the
+  closed-form parameters**, reporting residual in bps. Verified to recover known pools to ≤0.01 bps.
+- ✅ **venue calldata** for SolFi V2 / ZeroFi / Tessera (`propquote-replay::venues`), byte-tested.
+- ⏳ **Next:** point the sim at real mainnet accounts for one venue (SolFi V2 — explicit oracle
+  account makes it the cleanest), generate samples, run the fitter, and ship the first non-Obric
+  closed-form quoter. Then Geyser ingest + per-venue `PropAmm` impls.
 
 The point: closed-form first for speed, real-binary sim as the oracle that keeps you honest — the
 inverse of Magnus's sim-first design.

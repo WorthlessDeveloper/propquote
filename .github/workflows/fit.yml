@@ -1,0 +1,72 @@
+name: Fit (SolFi V2)
+
+# Manual only. Needs a repo secret SOLANA_RPC_URL (a mainnet RPC endpoint).
+# Add it under: Settings -> Secrets and variables -> Actions -> New repository secret.
+on:
+  workflow_dispatch:
+    inputs:
+      slot_override:
+        description: "Optional slot to warp the VM to (blank = use current slot)"
+        required: false
+        default: ""
+
+env:
+  RPC: ${{ secrets.SOLANA_RPC_URL }}
+
+jobs:
+  fit-solfi-v2:
+    name: fit SolFi V2 against live state
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check RPC secret is set
+        run: |
+          if [ -z "$RPC" ]; then
+            echo "::error::SOLANA_RPC_URL secret is not set."
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch program + accounts
+        run: |
+          set -euo pipefail
+          mkdir -p cfg/fit
+          solana program dump SV2EYYJyRz2YhfXwXnhNAevDEui5Q6yrfyo13WtupPF cfg/fit/solfi_v2.so --url "$RPC"
+
+          declare -A ACCTS=(
+            [market]=65ZHSArs5XxPseKQbB1B4r16vDxMWnCxHMzogDAqiDUc
+            [base_vault]=CRo8DBwrmd97DJfAnvCv96tZPL5Mktf2NZy2ZnhDer1A
+            [quote_vault]=GhFfLFSprPpfoRaWakPMmJTMJBHuz6C694jYwxy2dAic
+            [global_config]=FmxXDSR9WvpJTCh738D1LEDuhMoA8geCtZgHb3isy7Dp
+            [oracle]=2ny7eGyZCoeEVTkNLf5HcnJFBKkyA4p4gcrtb3b8y8ou
+            [base_mint]=So11111111111111111111111111111111111111112
+            [quote_mint]=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+          )
+          for name in "${!ACCTS[@]}"; do
+            echo "fetching $name (${ACCTS[$name]})"
+            solana account "${ACCTS[$name]}" --output json --url "$RPC" > "cfg/fit/$name.json"
+          done
+
+      - name: Resolve slot
+        id: slot
+        run: |
+          if [ -n "${{ github.event.inputs.slot_override }}" ]; then
+            echo "slot=${{ github.event.inputs.slot_override }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "slot=$(solana slot --url "$RPC")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run fit
+        env:
+          CFG_DIR: cfg/fit
+          SLOT: ${{ steps.slot.outputs.slot }}
+          RUST_BACKTRACE: "1"
+        run: cargo run -p propquote-sim --bin fit_solfi_v2

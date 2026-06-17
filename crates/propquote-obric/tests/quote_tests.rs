@@ -6,16 +6,22 @@ use propquote_obric::{ObricPool, SSTradingPair};
 
 /// A simple symmetric stable pool: mults 1:1, target == current_x, big_k = 1e14
 /// so target_x_k = sqrt(1e14) = 1e7.
-fn stable_pool(fee_millionth: u64, rebate_percentage: u64, protocol_share_thousandth: u64) -> ObricPool {
-    let mut s = SSTradingPair::default();
-    s.is_initialized = true;
-    s.mult_x = 1_000;
-    s.mult_y = 1_000;
-    s.big_k = 100_000_000_000_000; // 1e14
-    s.target_x = 1_000_000;
-    s.fee_millionth = fee_millionth;
-    s.rebate_percentage = rebate_percentage;
-    s.protocol_fee_share_thousandth = protocol_share_thousandth;
+fn stable_pool(
+    fee_millionth: u64,
+    rebate_percentage: u64,
+    protocol_share_thousandth: u64,
+) -> ObricPool {
+    let s = SSTradingPair {
+        is_initialized: true,
+        mult_x: 1_000,
+        mult_y: 1_000,
+        big_k: 100_000_000_000_000, // 1e14
+        target_x: 1_000_000,
+        fee_millionth,
+        rebate_percentage,
+        protocol_fee_share_thousandth: protocol_share_thousandth,
+        ..Default::default()
+    };
     let mut p = ObricPool::new(s);
     p.set_reserves(1_000_000, 1_000_000);
     p
@@ -59,15 +65,17 @@ fn protocol_fee_split() {
 fn rebate_applies_when_trade_reduces_x_deficit() {
     // Pool is short on X: target_x (1.5M) > current_x (1M), a 500k deficit. Selling X *adds* X,
     // pushing inventory toward target, so the fee is rebated. Y reserve is ample to fill the trade.
-    let mut s = SSTradingPair::default();
-    s.is_initialized = true;
-    s.mult_x = 1_000;
-    s.mult_y = 1_000;
-    s.big_k = 100_000_000_000_000;
-    s.target_x = 1_500_000; // deficit of 500_000 below current_x
-    s.fee_millionth = 10_000; // 1%
-    s.rebate_percentage = 100; // full rebate eligible
-    s.protocol_fee_share_thousandth = 0;
+    let s = SSTradingPair {
+        is_initialized: true,
+        mult_x: 1_000,
+        mult_y: 1_000,
+        big_k: 100_000_000_000_000,
+        target_x: 1_500_000,    // deficit of 500_000 below current_x
+        fee_millionth: 10_000,  // 1%
+        rebate_percentage: 100, // full rebate eligible
+        protocol_fee_share_thousandth: 0,
+        ..Default::default()
+    };
     let mut p = ObricPool::new(s);
     p.set_reserves(1_000_000, 5_000_000);
 
@@ -87,7 +95,9 @@ fn exact_out_inverts_exact_in() {
     // The solved input must actually deliver at least the target...
     assert!(q.amount_out >= target_out, "solved input underfills");
     // ...and be minimal: one unit less must underfill.
-    let less = p.quote(Side::XtoY, q.amount_in - 1, SwapMode::ExactIn).unwrap();
+    let less = p
+        .quote(Side::XtoY, q.amount_in - 1, SwapMode::ExactIn)
+        .unwrap();
     assert!(less.amount_out < target_out, "input was not minimal");
 }
 
@@ -117,7 +127,10 @@ fn both_directions_quote() {
 #[test]
 fn zero_amount_rejected() {
     let p = stable_pool(0, 0, 0);
-    assert_eq!(p.quote(Side::XtoY, 0, SwapMode::ExactIn), Err(QuoteError::ZeroAmount));
+    assert_eq!(
+        p.quote(Side::XtoY, 0, SwapMode::ExactIn),
+        Err(QuoteError::ZeroAmount)
+    );
 }
 
 #[test]
