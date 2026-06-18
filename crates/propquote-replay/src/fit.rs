@@ -50,11 +50,7 @@ pub fn predict(sample: &Sample, params: ObricParams) -> Option<u64> {
 }
 
 fn abs_diff(a: u64, b: u64) -> u64 {
-    if a > b {
-        a - b
-    } else {
-        b - a
-    }
+    a.abs_diff(b)
 }
 
 fn total_err(samples: &[Sample], params: ObricParams) -> u128 {

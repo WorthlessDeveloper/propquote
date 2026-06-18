@@ -43,8 +43,17 @@ out of the default build.
 | Venue | Approach | State |
 |-------|----------|-------|
 | **Obric V2** | closed-form (math is public) | ✅ implemented, 9 tests + independent numeric check |
-| SolFi V2 / ZeroFi / Tessera | closed-form via **fit-against-sim** | 🟡 tooling ready (sim + fitter + calldata); needs live data to fit |
+| **SolFi V2** | closed-form, fit to **real on-chain fills** | ✅ fitted — predicts WSOL→USDC fills to **~0.1 bps** (median) |
+| ZeroFi / Tessera | same, via [`tools/solfi_fit.py`](tools/solfi_fit.py) pattern | 🟡 tooling ready (fitter + calldata); swap the pool addresses |
 | HumidiFi / GoonFi / BisonFi | same pipeline | ⏳ next |
+
+**SolFi V2 result (real data):** [`tools/solfi_fit.py`](tools/solfi_fit.py) pulls recent SolFi V2
+SOL/USDC swaps via RPC, reads `amount_in`/`amount_out`/reserves from the vault balance deltas, and
+fits the Obric form — no LiteSVM or Solana toolchain needed, so it's verifiable anywhere. On a live
+sample it predicted fills to **median 0.07 bps** (p90 1.5 bps, the tail tracking oracle drift over
+the sampling window). Run it yourself: `SOLANA_RPC_URL=<rpc> python tools/solfi_fit.py`.
+Caveat: arb flow clusters around one trade size, so the curvature (`big_k`) is loosely identified
+and spread folds into the inferred oracle — fine for *predicting* output, less so for decomposing it.
 
 **How a venue gets cracked now** (the pipeline is built, end to end):
 1. `propquote-sim` runs the venue's real `.so` in LiteSVM against live accounts → ground-truth `amount_out`.
