@@ -84,7 +84,8 @@ pub fn isqrt(n: u128) -> u128 {
         return n;
     }
     let mut x = n;
-    let mut y = (x + 1) / 2;
+    // `x.div_ceil(2)` rather than `(x + 1) / 2` so the initial guess can't overflow at u128::MAX.
+    let mut y = x.div_ceil(2);
     while y < x {
         x = y;
         y = (x + n / x) / 2;
