@@ -43,23 +43,37 @@ out of the default build.
 | Venue | Approach | State |
 |-------|----------|-------|
 | **Obric V2** | closed-form (math is public) | ✅ implemented, 9 tests + independent numeric check |
-| **SolFi V2** | fit to **real on-chain fills** | ✅ predicts WSOL→USDC fills to **~0.1 bps** (median) |
-| **HumidiFi** | fit to **real on-chain fills** | ✅ **~0.16 bps** median (p90 0.36) on 15 live fills |
-| GoonFi | fit to real fills | 🟡 ~22 bps — inflated by dust-size oracle inference; needs refinement |
-| ZeroFi | fit to real fills | 🟡 `pmms.json` pool returns 0 clean fills (stale) — needs a current pool |
-| Tessera | fit to real fills | 🟡 too few fills in the sampling window — widen it |
-| BisonFi | same pipeline | ⏳ no public pool address yet |
+| **SolFi V2** | fit to real fills | ✅ down to **0.02 bps** median (size-diverse, tight window) |
+| **HumidiFi** | fit to real fills | ✅ **~0.2 bps** median |
+| **ZeroFi** | fit to real fills | ✅ **~0.5 bps** median (tight window; ~7 bps over a 150s window) |
+| **BisonFi** | fit to real fills | ✅ **~0.2 bps** median (1s window) |
+| **Tessera** | fit to real fills | ✅ **~0.4 bps** when SOL/USDC volume is present (often quiet) |
+| GoonFi | diagnosed: inactive | ⚪ ~80% of recent txs **fail**; its thin SOL/USDC pool quotes a **stale ~$80** (vs ~$71 live) and GoonFi V2 has no recent activity. Obric form fits its shape to ~7–10 bps — no healthy flow to fit, not a model gap. |
 
-**Reproduce:** [`tools/fit_venue.py`](tools/fit_venue.py) fits every venue in one pass;
-[`tools/solfi_fit.py`](tools/solfi_fit.py) is the detailed SolFi version. Both pull recent SOL/USDC
-swaps via RPC, read `amount_in`/`amount_out`/reserves from vault balance deltas, and fit the Obric
-form — no LiteSVM or Solana toolchain, verifiable anywhere:
-`SOLANA_RPC_URL=<rpc> python tools/fit_venue.py`.
+**The key result:** within a **tight time window** (so the oracle is ~constant), every prop AMM with
+SOL/USDC volume fits the Obric oracle-PMM form to **sub-bp** — strong evidence the whole family shares
+that shape. Over a long sampling window the residual inflates to several bps, but that is the **oracle
+drifting while we sample, not model error** (ZeroFi: 0.5 bps tight vs ~7 bps over 150s). GoonFi is the
+one venue that won't fit cleanly — but the diagnosis is that it's **effectively inactive**: ~80% of its
+recent transactions fail and its thin SOL/USDC pool quotes a stale ~$80 (vs ~$71 live), so there's no
+healthy flow to fit. A dead/stale venue, not a model failure.
 
-**Result:** SolFi V2 and HumidiFi are well-approximated by the oracle-PMM form (sub-bp prediction) —
-strong evidence the whole family shares the Obric shape. Caveats: arb flow clusters around one trade
-size (curvature `big_k` loosely identified), spread folds into the inferred oracle (so `fee` isn't
-separable without an external price feed), and the residual tail tracks oracle drift over the window.
+**Reproduce (live probe — exact numbers vary with the on-chain snapshot):**
+[`tools/fit_venue.py`](tools/fit_venue.py) discovers each venue's SOL/USDC vaults from recent activity,
+pulls fills from the vault's signatures, and fits the Obric form within a 30s window — no LiteSVM or
+Solana toolchain: `SOLANA_RPC_URL=<rpc> python tools/fit_venue.py`. ([`tools/solfi_fit.py`](tools/solfi_fit.py)
+is the detailed SolFi-only version.) Caveats: arb flow clusters around one trade size (curvature
+`big_k` loosely identified) and spread folds into the inferred oracle (so `fee` isn't separable
+without an external price feed).
+
+**Separating spread from oracle (two-sided):** [`tools/spread_probe.py`](tools/spread_probe.py) pulls
+*both* directions, so the near-mid sell price (bid) and buy price (ask) bracket the oracle and their
+gap is the spread. First cut: SolFi V2 ≈ **0.3 bps** spread, and all five active venues quote a mid of
+**~71.3 USDC/SOL within a few bps of each other** — they track a common oracle, which confirms the
+spread *is* separable (and is itself a cross-venue validation). Bp-precise per-venue spread still needs
+size/time-matched buy/sell pairs — the current probe carries a few bps of noise (occasionally negative),
+which is the next refinement. Bit-exact constants (decompiling each venue's bytecode / LiteSVM) need a
+Solana build host — not possible from the machine this was built on.
 
 **How a venue gets cracked now** (the pipeline is built, end to end):
 1. `propquote-sim` runs the venue's real `.so` in LiteSVM against live accounts → ground-truth `amount_out`.

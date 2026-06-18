@@ -1,43 +1,45 @@
 #!/usr/bin/env python3
 """Fit the Obric closed form to real on-chain fills for any prop AMM SOL/USDC pool.
 
-Generalises tools/solfi_fit.py: ground truth is each pool's vault token-balance deltas, so it works
-for any venue once you know its two reserve vaults — no instruction decoding, no LiteSVM, no Solana
-toolchain. Verifiable anywhere Python + an RPC are available.
+Robust version: instead of hardcoding (often stale) pool/vault addresses, it **discovers** each
+venue's SOL/USDC vaults dynamically from the program's recent swaps — the pool's (WSOL, USDC) vault
+pair is the token-account pair that recurs across the most transactions (user accounts vary; the
+pool's don't). Ground truth is the vault token-balance deltas, so no instruction decoding, no
+LiteSVM, no Solana toolchain — verifiable anywhere Python + an RPC are available.
 
 Usage:
     SOLANA_RPC_URL=<rpc> python tools/fit_venue.py [venue ...]
     python tools/fit_venue.py <rpc> [venue ...]
-
-Pool addresses are from LimeChain/magnus cfg/payloads/pmms.json (edit if stale). BisonFi is omitted
-(no public pool address yet). Caveats are the same as solfi_fit.py: arb flow clusters around one
-trade size (curvature loosely identified) and spread folds into the inferred oracle.
 """
 import json
 import math
 import os
+import statistics
 import sys
 import urllib.request
+from collections import Counter
 
+WSOL = "So11111111111111111111111111111111111111112"
+USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 SCALE = 1_000_000
+DUST_LAMPORTS = 10_000_000  # 0.01 SOL — below this the oracle inference is too noisy to trust
+WINDOW_S = 30  # fit only fills within this many seconds so the oracle is ~constant (drift dominates otherwise)
 
-# venue -> (market/pool used for getSignaturesForAddress, base vault [WSOL], quote vault [USDC])
+# venue -> program id (vaults are discovered, not hardcoded)
 VENUES = {
-    "solfi-v2": ("65ZHSArs5XxPseKQbB1B4r16vDxMWnCxHMzogDAqiDUc",
-                 "CRo8DBwrmd97DJfAnvCv96tZPL5Mktf2NZy2ZnhDer1A",
-                 "GhFfLFSprPpfoRaWakPMmJTMJBHuz6C694jYwxy2dAic"),
-    "zerofi": ("2h9hhu3gxY9kCdXEwdTHV8yPAMYVoHgKopRyG1HbDwfi",
-               "ERP5RTV6cWmoGrv7r9W2V5pbgDFSepc4j97qNnx1Jris",
-               "7wYJVD8iXmMQjND1fwi1hPr68QwruVVtirbotyJZXaVH"),
-    "tessera": ("FLckHLGMJy5gEoXWwcE68Nprde1D4araK4TGLw4pQq2n",
-                "5pVN5XZB8cYBjNLFrsBCPWkCQBan5K5Mq2dWGzwPgGJV",
-                "9t4P5wMwfFkyn92Z7hf463qYKEZf8ERVZsGBEPNp8uJx"),
-    "humidifi": ("FksffEqnBRixYGR791Qw2MgdU7zNCpHVFYBL4Fa4qVuH",
-                 "C3FzbX9n1YD2dow2dCmEv5uNyyf22Gb3TLAEqGBhw5fY",
-                 "3RWFAQBRkNGq7CMGcTLK3kXDgFTe9jgMeFYqk8nHwcWh"),
-    "goonfi": ("4uWuh9fC7rrZKrN8ZdJf69MN1e2S7FPpMqcsyY1aof6K",
-               "pKiUC9hDXv52xqU1p3BKypV9AQjAMgfZUGRnoBsdkKm",
-               "Gsy5Zr7Vxn5KckAbduPHHGR1qzPJ4w3GSYmcinWAkhrC"),
+    "solfi-v2": "SV2EYYJyRz2YhfXwXnhNAevDEui5Q6yrfyo13WtupPF",
+    "zerofi": "ZERor4xhbUycZ6gb9ntrhqscUcZmAbQDjEAtCf4hbZY",
+    "tessera": "TessVdML9pBGgG9yGks7o4HewRaXVAMuoVj4x83GLQH",
+    "humidifi": "9H6tua7jkLhdm3w8BvgpTn5LZNU7g4ZynDmCiNN3q6Rp",
+    "goonfi": "goonERTdGsjnkZqWuVjs73BZ3Pb9qoCUdBUL17BnS5j",
+    "bisonfi": "BiSoNHVpsVZW2F7rx2eQ59yQwKxzU5NvBcmKshCSUypi",
+}
+
+# Some venues sign far more oracle-update txs than swaps (HumidiFi pushes its price ~17x/sec), so
+# getSignaturesForAddress(program) is mostly noise. For those, discover vaults from a known SOL/USDC
+# pool/market account instead — its signatures are swaps, not oracle updates.
+SIG_HINT = {
+    "humidifi": "FksffEqnBRixYGR791Qw2MgdU7zNCpHVFYBL4Fa4qVuH",
 }
 
 
@@ -47,9 +49,10 @@ def rpc(url, method, params):
     return json.load(urllib.request.urlopen(req, timeout=40)).get("result")
 
 
-def collect(url, market, base_vault, quote_vault, limit=120, want=24):
-    sigs = rpc(url, "getSignaturesForAddress", [market, {"limit": limit}]) or []
-    samples, times = [], []
+def fetch_txs(url, program, limit=120):
+    """Return a list of (entries, blockTime), entries = [(pubkey, mint, pre_amt, post_amt), ...]."""
+    sigs = rpc(url, "getSignaturesForAddress", [program, {"limit": limit}]) or []
+    out = []
     for s in sigs:
         if s.get("err"):
             continue
@@ -62,27 +65,43 @@ def collect(url, market, base_vault, quote_vault, limit=120, want=24):
         loaded = meta.get("loadedAddresses") or {}
         combined = ([k["pubkey"] for k in msg.get("accountKeys", [])]
                     + loaded.get("writable", []) + loaded.get("readonly", []))
+        post = {b["accountIndex"]: int(b["uiTokenAmount"]["amount"]) for b in meta.get("postTokenBalances") or []}
+        entries = []
+        for b in meta.get("preTokenBalances") or []:
+            i = b["accountIndex"]
+            if i < len(combined):
+                pre_amt = int(b["uiTokenAmount"]["amount"])
+                entries.append((combined[i], b.get("mint"), pre_amt, post.get(i, pre_amt)))
+        out.append((entries, tx.get("blockTime")))
+    return out
 
-        def bals(b):
-            d = {}
-            for x in b or []:
-                i = x["accountIndex"]
-                if i < len(combined):
-                    d[combined[i]] = int(x["uiTokenAmount"]["amount"])
-            return d
 
-        pre, post = bals(meta.get("preTokenBalances")), bals(meta.get("postTokenBalances"))
-        if base_vault not in pre or quote_vault not in pre:
+def discover_vaults(txs):
+    """The pool's (WSOL, USDC) vault pair is the changed-account pair recurring in the most txs."""
+    pair = Counter()
+    for entries, _ in txs:
+        wsols = [pk for pk, m, pre, po in entries if m == WSOL and pre != po]
+        usdcs = [pk for pk, m, pre, po in entries if m == USDC and pre != po]
+        for w in set(wsols):
+            for u in set(usdcs):
+                pair[(w, u)] += 1
+    if not pair:
+        return None
+    (base, quote), n = pair.most_common(1)[0]
+    return base, quote, n
+
+
+def extract_fills(txs, base, quote):
+    samples = []
+    for entries, bt in txs:
+        d = {pk: (pre, po) for pk, m, pre, po in entries}
+        if base not in d or quote not in d:
             continue
-        bd = post.get(base_vault, pre[base_vault]) - pre[base_vault]
-        qd = post.get(quote_vault, pre[quote_vault]) - pre[quote_vault]
-        if bd > 0 and qd < 0:  # clean WSOL -> USDC
-            samples.append({"cy": pre[quote_vault], "ain": bd, "aout": -qd})
-            if tx.get("blockTime"):
-                times.append(tx["blockTime"])
-        if len(samples) >= want:
-            break
-    return samples, times
+        bpre, bpost = d[base]
+        qpre, qpost = d[quote]
+        if bpost - bpre > 0 and qpost - qpre < 0:  # clean WSOL -> USDC
+            samples.append({"cy": qpre, "ain": bpost - bpre, "aout": qpre - qpost, "t": bt or 0})
+    return samples
 
 
 def predict(ain, cy, mult_x, big_k, fee):
@@ -127,25 +146,47 @@ def fit(samples, mult_x):
 
 
 def run(url, venue):
-    market, base_vault, quote_vault = VENUES[venue]
+    program = VENUES[venue]
     try:
-        samples, times = collect(url, market, base_vault, quote_vault)
-    except Exception as e:  # noqa: BLE001 - report and continue
+        # 1. discover the dominant SOL/USDC vault pair from recent activity (program, or a market
+        #    hint for venues whose program signatures are mostly oracle updates)
+        found = discover_vaults(fetch_txs(url, SIG_HINT.get(venue, program), limit=70))
+        if not found:
+            print(f"{venue:10} no SOL/USDC pool found in recent program activity")
+            return
+        base, quote, _ = found
+        # 2. pull pool-specific history straight from the base vault's signatures
+        samples = extract_fills(fetch_txs(url, base, limit=150), base, quote)
+    except Exception as e:  # noqa: BLE001
         print(f"{venue:10} ERROR: {e}")
         return
-    span = f"{max(times) - min(times)}s" if times else "?"
-    if len(samples) < 5:
-        print(f"{venue:10} only {len(samples)} clean WSOL->USDC fills (low volume / stale pool)")
+    # Restrict to a tight time window so the oracle is ~constant (otherwise drift, not model error,
+    # dominates the residual). Fall back to the full set if the window is too thin.
+    ts = [s["t"] for s in samples if s["t"]]
+    if ts:
+        tmax = max(ts)
+        windowed = [s for s in samples if not s["t"] or tmax - s["t"] <= WINDOW_S]
+        if sum(1 for s in windowed if s["ain"] >= DUST_LAMPORTS) >= 5:
+            samples = windowed
+    # Drop dust trades so the oracle inference isn't dominated by noise.
+    pool = [s for s in samples if s["ain"] >= DUST_LAMPORTS]
+    if len(pool) < 5:
+        pool = samples
+    if len(pool) < 5:
+        print(f"{venue:10} only {len(samples)} clean WSOL->USDC fills (vault {base[:6]}..)")
         return
-    samples.sort(key=lambda s: s["ain"])
-    sm = samples[0]
-    mult_x = round(sm["aout"] / sm["ain"] * SCALE)
-    big_k, fee = fit(samples, mult_x)
+    pool.sort(key=lambda s: s["ain"])
+    # Oracle = median effective price of the smallest third (robust to a single odd trade).
+    k = max(1, len(pool) // 3)
+    px = statistics.median(s["aout"] / s["ain"] for s in pool[:k])
+    mult_x = round(px * SCALE)
+    big_k, fee = fit(pool, mult_x)
     bps = sorted(abs(predict(s["ain"], s["cy"], mult_x, big_k, fee) - s["aout"]) / s["aout"] * 1e4
-                 for s in samples if predict(s["ain"], s["cy"], mult_x, big_k, fee))
-    print(f"{venue:10} {len(samples):>3} fills/{span:>5}  "
-          f"~{sm['aout'] / sm['ain'] * 1000:6.2f} USDC/SOL  "
-          f"sizes {samples[0]['ain'] / 1e9:6.3f}-{samples[-1]['ain'] / 1e9:<7.3f} SOL  "
+                 for s in pool if predict(s["ain"], s["cy"], mult_x, big_k, fee))
+    pts = [s["t"] for s in pool if s["t"]]
+    span = f"{max(pts) - min(pts)}s" if pts else "?"
+    print(f"{venue:10} {len(pool):>3} fills/{span:>5}  ~{px * 1000:6.2f} USDC/SOL  "
+          f"sizes {pool[0]['ain'] / 1e9:6.3f}-{pool[-1]['ain'] / 1e9:<7.3f} SOL  "
           f"err: med {bps[len(bps) // 2]:5.2f} / p90 {bps[int(len(bps) * 0.9)]:5.2f} / max {bps[-1]:5.2f} bps")
 
 
@@ -160,10 +201,7 @@ def main():
     print(f"{'venue':10} {'fills':>9}  {'oracle':>15}  {'size range':>22}  prediction error")
     print("-" * 100)
     for v in venues:
-        if v in VENUES:
-            run(url, v)
-        else:
-            print(f"{v:10} unknown venue (have: {', '.join(VENUES)})")
+        run(url, v) if v in VENUES else print(f"{v:10} unknown (have: {', '.join(VENUES)})")
 
 
 if __name__ == "__main__":

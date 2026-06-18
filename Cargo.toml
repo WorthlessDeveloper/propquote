@@ -4,15 +4,12 @@ members = [
     "crates/propquote-core",
     "crates/propquote-obric",
     "crates/propquote-replay",
-    "crates/propquote-sim",
 ]
-# The heavy LiteSVM sim crate is excluded from the default set so `cargo build/test/clippy`
-# (and `cargo check`) stay fast and dependency-light. CI builds the sim crate in a separate job.
-default-members = [
-    "crates/propquote-core",
-    "crates/propquote-obric",
-    "crates/propquote-replay",
-]
+# propquote-sim (LiteSVM ground-truth) is EXCLUDED from the workspace build: its Solana 3.0
+# dependency tree has an unresolved `solana-hash` version conflict and won't compile in CI. The
+# working ground-truth path is tools/fit_venue.py (historical on-chain fills). The crate is kept
+# in the repo for reference / future revival on a machine that can build the Solana tree.
+exclude = ["crates/propquote-sim"]
 
 [workspace.package]
 version = "0.1.0"

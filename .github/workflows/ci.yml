@@ -38,16 +38,3 @@ jobs:
 
       - name: Doc
         run: cargo doc --no-deps
-
-  # Advisory: compile the heavy LiteSVM ground-truth crate. Allowed to fail so a hiccup in the
-  # large Solana dependency tree never turns the badge red; the gate above is the source of truth.
-  sim-build:
-    name: build propquote-sim (advisory)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build sim crate
-        run: cargo build -p propquote-sim
