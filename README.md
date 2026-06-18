@@ -43,17 +43,23 @@ out of the default build.
 | Venue | Approach | State |
 |-------|----------|-------|
 | **Obric V2** | closed-form (math is public) | ✅ implemented, 9 tests + independent numeric check |
-| **SolFi V2** | closed-form, fit to **real on-chain fills** | ✅ fitted — predicts WSOL→USDC fills to **~0.1 bps** (median) |
-| ZeroFi / Tessera | same, via [`tools/solfi_fit.py`](tools/solfi_fit.py) pattern | 🟡 tooling ready (fitter + calldata); swap the pool addresses |
-| HumidiFi / GoonFi / BisonFi | same pipeline | ⏳ next |
+| **SolFi V2** | fit to **real on-chain fills** | ✅ predicts WSOL→USDC fills to **~0.1 bps** (median) |
+| **HumidiFi** | fit to **real on-chain fills** | ✅ **~0.16 bps** median (p90 0.36) on 15 live fills |
+| GoonFi | fit to real fills | 🟡 ~22 bps — inflated by dust-size oracle inference; needs refinement |
+| ZeroFi | fit to real fills | 🟡 `pmms.json` pool returns 0 clean fills (stale) — needs a current pool |
+| Tessera | fit to real fills | 🟡 too few fills in the sampling window — widen it |
+| BisonFi | same pipeline | ⏳ no public pool address yet |
 
-**SolFi V2 result (real data):** [`tools/solfi_fit.py`](tools/solfi_fit.py) pulls recent SolFi V2
-SOL/USDC swaps via RPC, reads `amount_in`/`amount_out`/reserves from the vault balance deltas, and
-fits the Obric form — no LiteSVM or Solana toolchain needed, so it's verifiable anywhere. On a live
-sample it predicted fills to **median 0.07 bps** (p90 1.5 bps, the tail tracking oracle drift over
-the sampling window). Run it yourself: `SOLANA_RPC_URL=<rpc> python tools/solfi_fit.py`.
-Caveat: arb flow clusters around one trade size, so the curvature (`big_k`) is loosely identified
-and spread folds into the inferred oracle — fine for *predicting* output, less so for decomposing it.
+**Reproduce:** [`tools/fit_venue.py`](tools/fit_venue.py) fits every venue in one pass;
+[`tools/solfi_fit.py`](tools/solfi_fit.py) is the detailed SolFi version. Both pull recent SOL/USDC
+swaps via RPC, read `amount_in`/`amount_out`/reserves from vault balance deltas, and fit the Obric
+form — no LiteSVM or Solana toolchain, verifiable anywhere:
+`SOLANA_RPC_URL=<rpc> python tools/fit_venue.py`.
+
+**Result:** SolFi V2 and HumidiFi are well-approximated by the oracle-PMM form (sub-bp prediction) —
+strong evidence the whole family shares the Obric shape. Caveats: arb flow clusters around one trade
+size (curvature `big_k` loosely identified), spread folds into the inferred oracle (so `fee` isn't
+separable without an external price feed), and the residual tail tracks oracle drift over the window.
 
 **How a venue gets cracked now** (the pipeline is built, end to end):
 1. `propquote-sim` runs the venue's real `.so` in LiteSVM against live accounts → ground-truth `amount_out`.

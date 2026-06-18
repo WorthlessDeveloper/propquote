@@ -148,10 +148,12 @@ mod tests {
     fn isqrt_floor_property() {
         for n in [2u128, 3, 15, 16, 17, 1_000_003, u128::MAX] {
             let r = isqrt(n);
-            assert!(r * r <= n || r > (1u128 << 64), "r*r <= n for n={n}");
-            // r+1 squared exceeds n (guard against overflow near the top).
-            if r < (1u128 << 64) {
-                assert!((r + 1) * (r + 1) > n, "(r+1)^2 > n for n={n}");
+            // r*r never overflows: r <= 2^64-1 for n <= u128::MAX, so r*r < 2^128.
+            assert!(r * r <= n, "r*r <= n for n={n}");
+            // (r+1)^2 > n — but (r+1)^2 can exceed u128, which trivially satisfies it.
+            match (r + 1).checked_mul(r + 1) {
+                Some(sq) => assert!(sq > n, "(r+1)^2 > n for n={n}"),
+                None => {} // (r+1)^2 > u128::MAX >= n
             }
         }
     }
